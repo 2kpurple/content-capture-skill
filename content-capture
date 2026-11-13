@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # content-capture — 内容收录统一 CLI 入口
 #
-#   content-capture collect [--max-seconds N] [--skip-transcribe] <链接> [输出目录]
+#   content-capture collect [--max-seconds N] [--language L] [--skip-transcribe] <链接> [输出目录]
 #   content-capture detect  <链接或分享口令>
 #   content-capture setup   [--check]
 #   content-capture doctor
-#   content-capture transcribe <音频> [--max-seconds N]
+#   content-capture transcribe <音频> [--max-seconds N] [--language L]
 #   content-capture help | --help
 #   content-capture --version
 #
@@ -15,9 +15,16 @@
 # doctor 全部就绪为 0，有缺失为 1。
 set -uo pipefail
 
-SKILL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# 解析软链：放进 PATH 的软链也要找到真实的技能目录（老 macOS 的 readlink 没有 -f，用 python3 兜底）
+CC_SELF="$(readlink -f "${BASH_SOURCE[0]}" 2>/dev/null \
+  || python3 -c 'import os,sys; print(os.path.realpath(sys.argv[1]))' "${BASH_SOURCE[0]}" 2>/dev/null \
+  || printf '%s' "${BASH_SOURCE[0]}")"
+SKILL_DIR="$(cd "$(dirname "$CC_SELF")" && pwd)"
 # shellcheck source=scripts/lib.sh
-source "$SKILL_DIR/scripts/lib.sh"
+if ! source "$SKILL_DIR/scripts/lib.sh"; then
+  echo "content-capture: 加载 $SKILL_DIR/scripts/lib.sh 失败（文件缺失或出错）。请确认技能目录完整，软链要指向技能目录里的真实文件。" >&2
+  exit 3
+fi
 
 CC_VERSION="0.2.0"
 
@@ -26,11 +33,11 @@ cmd_help() {
 content-capture — 把一条链接变成文案 + 内容解析（抖音、小红书、X、YouTube、微信公众号）
 
 用法:
-  content-capture collect [--max-seconds N] [--skip-transcribe] <链接> [输出目录]
+  content-capture collect [--max-seconds N] [--language L] [--skip-transcribe] <链接> [输出目录]
   content-capture detect <链接或分享口令>
   content-capture setup [--check]
   content-capture doctor
-  content-capture transcribe <音频> [--max-seconds N]
+  content-capture transcribe <音频> [--max-seconds N] [--language L]
   content-capture help | --help
   content-capture --version
 
@@ -40,7 +47,11 @@ content-capture — 把一条链接变成文案 + 内容解析（抖音、小红
                可从分享口令文本里抽出第一个 URL 再判断
   setup        安装或补齐依赖（调用 setup.sh，其中会跑 wxfetch/setup.sh）
   doctor       检查依赖、模型、抖音 API、wxfetch 虚拟环境，逐项 ok / 缺失
-  transcribe   调用 scripts/transcribe.py，默认模型 small
+  transcribe   调用 scripts/transcribe.py，默认模型 small，默认自动识别语言
+
+--language L   转录语言：auto（自动识别）、zh、en……也可用环境变量 CC_LANGUAGE。
+               collect 不指定时：抖音、小红书默认 zh；X、YouTube 默认 auto。
+抖音图集、小红书图文只保存图片和文案，不做转录。
 
 collect 退出码：0 成功；1 用法错误；2 不支持的链接；3 依赖缺失；
 4 下载失败；5 转录失败；6 公众号抓取失败；10 工具未就绪。
@@ -85,6 +96,12 @@ cmd_doctor() {
     cc_ok "依赖 ffmpeg: $(ffmpeg -version 2>/dev/null | head -1)"
   else
     cc_bad "依赖 ffmpeg"
+    missing=1
+  fi
+  if command -v ffprobe >/dev/null 2>&1; then
+    cc_ok "依赖 ffprobe"
+  else
+    cc_bad "依赖 ffprobe（通常随 ffmpeg 一起安装）"
     missing=1
   fi
   if command -v uv >/dev/null 2>&1; then
@@ -173,20 +190,30 @@ cmd_doctor() {
 
 # ---------- transcribe ----------
 cmd_transcribe() {
-  local media="" max_seconds=""
+  local media="" max_seconds="" language="${CC_LANGUAGE:-auto}"
+  local usage_t="用法: content-capture transcribe <音频或视频> [--max-seconds N] [--language auto|zh|en|...]"
   while [ $# -gt 0 ]; do
     case "$1" in
       -h|--help)
-        echo "用法: content-capture transcribe <音频或视频> [--max-seconds N]" >&2
+        echo "$usage_t" >&2
         exit 0
         ;;
       --max-seconds)
-        [ $# -ge 2 ] || { cc_err "用法: content-capture transcribe <音频> [--max-seconds N]"; exit 1; }
+        [ $# -ge 2 ] || { cc_err "$usage_t"; exit 1; }
         max_seconds="$2"
         shift 2
         ;;
       --max-seconds=*)
         max_seconds="${1#--max-seconds=}"
+        shift
+        ;;
+      --language|-l)
+        [ $# -ge 2 ] || { cc_err "$usage_t"; exit 1; }
+        language="$2"
+        shift 2
+        ;;
+      --language=*)
+        language="${1#--language=}"
         shift
         ;;
       --)
@@ -195,7 +222,7 @@ cmd_transcribe() {
         ;;
       -*)
         cc_err "未知参数: $1"
-        echo "用法: content-capture transcribe <音频或视频> [--max-seconds N]" >&2
+        echo "$usage_t" >&2
         exit 1
         ;;
       *)
@@ -209,13 +236,13 @@ cmd_transcribe() {
         ;;
     esac
   done
-  [ -n "$media" ] || { cc_err "用法: content-capture transcribe <音频或视频> [--max-seconds N]"; exit 1; }
+  [ -n "$media" ] || { cc_err "$usage_t"; exit 1; }
   local py="${CC_VENV}/bin/python"
   if [ ! -x "$py" ]; then
     cc_err "找不到转录环境: $CC_VENV （先运行 content-capture setup，或设置 CC_VENV）"
     exit 3
   fi
-  local args=("$py" "$SKILL_DIR/scripts/transcribe.py" "$media")
+  local args=("$py" "$SKILL_DIR/scripts/transcribe.py" --language "$language" "$media")
   if [ -n "$max_seconds" ]; then
     args+=(--max-seconds "$max_seconds")
   fi
@@ -226,11 +253,12 @@ cmd_transcribe() {
 cmd_collect() {
   local MAX_SECONDS="${CC_MAX_SECONDS:-}"
   local SKIP_TRANSCRIBE=0
+  local LANGUAGE="${CC_LANGUAGE:-}"
   local URL=""
   local OUT=""
 
   collect_usage() {
-    echo "用法: content-capture collect [--max-seconds N] [--skip-transcribe] <链接> [输出目录]" >&2
+    echo "用法: content-capture collect [--max-seconds N] [--language auto|zh|en|...] [--skip-transcribe] <链接> [输出目录]" >&2
     exit 1
   }
 
@@ -245,6 +273,15 @@ cmd_collect() {
         ;;
       --max-seconds=*)
         MAX_SECONDS="${1#--max-seconds=}"
+        shift
+        ;;
+      --language|-l)
+        [ $# -ge 2 ] || collect_usage
+        LANGUAGE="$2"
+        shift 2
+        ;;
+      --language=*)
+        LANGUAGE="${1#--language=}"
         shift
         ;;
       --)
@@ -322,10 +359,12 @@ files = {
     "transcript": None,
     "transcript_plain": None,
     "media": [],
+    "images": [],
     "markdown": [],
     "other": [],
 }
 media_ext = {".mp4", ".m4a", ".mp3", ".webm", ".mkv", ".mov", ".wav", ".aac", ".opus"}
+image_ext = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif", ".avif"}
 skip_names = {"summary.json", "yt-dlp.log", "xhs_cli.log", "share_response.json", "detail_response.json"}
 for p in sorted(out_p.rglob("*")):
     if not p.is_file():
@@ -343,6 +382,8 @@ for p in sorted(out_p.rglob("*")):
         files["markdown"].append(rel)
     elif suf in media_ext:
         files["media"].append(rel)
+    elif suf in image_ext:
+        files["images"].append(rel)
     elif name in {"meta.json", "article.json"} or suf == ".json":
         pass
     else:
@@ -357,6 +398,7 @@ payload = {
     "error_code": int(code),
     "message": message,
     "platform": platform,
+    "kind": meta.get("kind") or ("article" if platform == "wechat" else ("video" if meta else None)),
     "url": url,
     "title": title,
     "author": author,
@@ -412,9 +454,25 @@ PY
       ;;
   esac
 
+  # 抖音图集 / 小红书图文：只有图片和文案，不送去转录
+  local KIND
+  KIND="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1], encoding="utf-8")).get("kind") or "")' "$OUT/meta.json" 2>/dev/null || true)"
+  if [ "$KIND" = images ]; then
+    write_summary ok 0 "图集/图文：已保存图片和文案（无需转录）"
+    exit 0
+  fi
+
   if [ "$SKIP_TRANSCRIBE" = 1 ]; then
     write_summary ok 0 "下载成功（已跳过转录）"
     exit 0
+  fi
+
+  # 转录语言：--language / CC_LANGUAGE 优先；否则抖音、小红书用 zh，X、YouTube 自动识别
+  if [ -z "$LANGUAGE" ]; then
+    case "$PLATFORM" in
+      douyin|xhs) LANGUAGE=zh ;;
+      *) LANGUAGE=auto ;;
+    esac
   fi
 
   local MEDIA
@@ -449,19 +507,29 @@ PY
     fail 3 "找不到转录环境: $CC_VENV （先运行 content-capture setup，或设置 CC_VENV）"
   fi
 
-  local TRANS_ARGS=("$PYBIN" "$SKILL_DIR/scripts/transcribe.py" --out-dir "$OUT" "$MEDIA")
+  local TRANS_ARGS=("$PYBIN" "$SKILL_DIR/scripts/transcribe.py" --out-dir "$OUT" --language "$LANGUAGE" "$MEDIA")
   if [ -n "$MAX_SECONDS" ]; then
     TRANS_ARGS+=(--max-seconds "$MAX_SECONDS")
-    cc_info "转录 $MEDIA （仅前 ${MAX_SECONDS} 秒）"
+    cc_info "转录 $MEDIA （语言 $LANGUAGE，仅前 ${MAX_SECONDS} 秒）"
   else
-    cc_info "转录 $MEDIA"
+    cc_info "转录 $MEDIA （语言 $LANGUAGE）"
   fi
   set +e
   "${TRANS_ARGS[@]}"
   st=$?
   set -e
-  if [ "$st" -ne 0 ]; then
-    fail 5 "转录失败（退出码 $st）"
+  case "$st" in
+    0) ;;
+    3) fail 3 "转录依赖缺失（ffmpeg / ffprobe / faster-whisper，见上方日志）" ;;
+    4) fail 5 "转录失败：媒体文件损坏或不是音视频，ffprobe 读不了（transcribe.py 退出码 4）" ;;
+    7) fail 5 "转录失败：媒体没有音轨（transcribe.py 退出码 7）" ;;
+    *) fail 5 "转录失败（transcribe.py 退出码 $st）" ;;
+  esac
+  if [ ! -s "$OUT/transcript_plain.txt" ]; then
+    # 有音轨但没识别出人声（比如纯音乐）：不算失败，但明确说文案为空
+    cc_info "有音轨，但没有识别出人声，文案为空"
+    write_summary ok 0 "下载并转录完成，但没有识别出人声（文案为空）"
+    exit 0
   fi
 
   write_summary ok 0 "下载并转录成功"

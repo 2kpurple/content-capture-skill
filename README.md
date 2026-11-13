@@ -68,7 +68,7 @@ export CC_WHISPER_MODEL=/path/to/faster-whisper-small
 单独转录本地音频或视频（默认模型 `small`）：
 
 ```bash
-./content-capture transcribe <音频或视频> [--max-seconds N]
+./content-capture transcribe <音频或视频> [--max-seconds N] [--language auto|zh|en|...]
 ```
 
 结束时在 stdout 打印 JSON 摘要（平台、标题、作者、文件路径、状态），完整副本在 `<输出目录>/summary.json`。失败会带 `error_code` 和 `message`，退出码非 0。
@@ -81,7 +81,7 @@ export CC_WHISPER_MODEL=/path/to/faster-whisper-small
 scripts/douyin.sh  <抖音链接>   <输出目录>
 scripts/xhs.sh     <小红书链接> <输出目录>
 scripts/ytdlp.sh   <X|YouTube 链接> <输出目录>
-$CC_VENV/bin/python scripts/transcribe.py [--out-dir DIR] [--max-seconds N] 输入文件
+$CC_VENV/bin/python scripts/transcribe.py [--out-dir DIR] [--max-seconds N] [--language auto|zh|en|...] 输入文件
 ```
 
 ## 各平台要点
@@ -92,7 +92,7 @@ $CC_VENV/bin/python scripts/transcribe.py [--out-dir DIR] [--max-seconds N] 输�
 - **YouTube**：`--extractor-args youtube:player_client=android -f 18`。
 - **公众号**：由 `collect` 调用 `wxfetch/`，不需要登录。
 
-转录使用 faster-whisper，默认模型 `small`：`device=cpu`、`compute_type=int8`、`language=zh`、`vad_filter=True`。输入可以是视频或音频；必要时先用 ffmpeg 抽 16 kHz 单声道。输出 `transcript.txt`（带时间戳）和 `transcript_plain.txt`（纯文本）。
+转录使用 faster-whisper，默认模型 `small`：`device=cpu`、`compute_type=int8`、`vad_filter=True`。语言：collect 对抖音、小红书默认 `zh`，对 X、YouTube 默认自动识别；可用 `--language`（或环境变量 `CC_LANGUAGE`）覆盖，`auto` 表示自动识别。抖音图集、小红书图文只保存图片和文案，不转录。文件损坏、ffprobe 读不了或没有音轨时，collect 以退出码 5 报失败。输入可以是视频或音频；必要时先用 ffmpeg 抽 16 kHz 单声道。输出 `transcript.txt`（带时间戳）和 `transcript_plain.txt`（纯文本）。
 
 ## 鸣谢
 

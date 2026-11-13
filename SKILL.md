@@ -65,7 +65,7 @@ stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），�
 - **X**：yt-dlp 默认参数。有的视频没有音轨，转录会写 `[无音轨]`。
 - **YouTube**：yt-dlp 加 `--extractor-args "youtube:player_client=android" -f 18`，避开 429。
 - **公众号**：`collect` 调用 `wxfetch`，先走 HTTP，失败就换 Playwright 无头浏览器；输出 `article.md`（带标题、公众号、作者、发布时间）、`article.json`、`images/`。它自己的退出码：4 反爬（稍后重试一次），5 已删除，6 只能在微信里打开，7 账号迁移，8 付费内容。多篇逐篇跑，篇间停一两秒。
-- **转录**：faster-whisper，默认模型 `small`，CPU、int8、`language=zh`、`vad_filter=True`；输出带时间戳的 `transcript.txt` 和纯文本。也可用 `content-capture transcribe <音频> [--max-seconds N]` 单独转录。
+- **转录**：faster-whisper，默认模型 `small`，CPU、int8、`vad_filter=True`；语言默认抖音/小红书 `zh`、X/YouTube 自动识别，可用 `--language auto|zh|en|...` 覆盖。输出带时间戳的 `transcript.txt` 和纯文本。也可用 `content-capture transcribe <音频> [--max-seconds N] [--language L]` 单独转录。抖音图集、小红书图文只存图片和文案（summary 里 `kind: images`），不转录；文件损坏或没有音轨时 collect 报失败（退出码 5）。
 
 ## 3. 存档
 

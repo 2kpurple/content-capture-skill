@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
-"""整理 XHS-Downloader 的输出；视频没下成时，把 http://xhscdn 改成 https:// 用 curl 补下。"""
+"""整理 XHS-Downloader 的输出；视频没下成时，把 http://xhscdn 改成 https:// 用 curl 补下。
+
+图文、图集笔记只保存图片和文案：不把图片当 .mp4 补下，也不交给转录（meta.kind = images）。
+"""
 from __future__ import annotations
 
 import json
@@ -11,7 +14,43 @@ import sys
 from pathlib import Path
 
 MEDIA_EXT = {".mp4", ".mov", ".webm", ".m4v", ".mp3", ".m4a", ".wav"}
+IMAGE_EXT = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".heic", ".heif", ".avif"}
 NOTE_EXT = {".md", ".txt", ".json"}
+# XHS-Downloader 的作品类型：图文、图集按图片下载；只有「视频」需要转录
+IMAGE_TYPES = {"图文", "图集", "image", "images", "normal", "gallery"}
+VIDEO_TYPES = {"视频", "video"}
+
+
+def sniff_kind(path: Path) -> str:
+    """按文件头判断下回来的是图片还是音视频：image / av / 空串。"""
+    try:
+        with path.open("rb") as f:
+            head = f.read(16)
+    except OSError:
+        return ""
+    if head.startswith(b"\xff\xd8\xff") or head.startswith(b"\x89PNG") or head[:4] == b"GIF8":
+        return "image"
+    if head[:4] == b"RIFF" and head[8:12] == b"WEBP":
+        return "image"
+    if head[4:8] == b"ftyp":
+        return "image" if head[8:12] in (b"heic", b"heix", b"mif1", b"msf1", b"avif", b"avis") else "av"
+    if head[:4] == b"\x1aE\xdf\xa3" or head[:3] == b"ID3" or head[:4] == b"RIFF":
+        return "av"
+    return ""
+
+
+def image_suffix(path: Path) -> str:
+    with path.open("rb") as f:
+        head = f.read(16)
+    if head.startswith(b"\x89PNG"):
+        return ".png"
+    if head[:4] == b"RIFF":
+        return ".webp"
+    if head[:4] == b"GIF8":
+        return ".gif"
+    if head[4:8] == b"ftyp":
+        return ".avif" if head[8:12] in (b"avif", b"avis") else ".heic"
+    return ".jpg"
 
 
 def iter_files(root: Path):
@@ -47,8 +86,8 @@ def parse_maybe_list(val) -> list[str]:
     return [part for part in re.split(r"[\s,]+", s) if part]
 
 
-def collect_from_db(out_p: Path, cdn_urls: list[str]) -> tuple[str, str]:
-    title, author = "", ""
+def collect_from_db(out_p: Path, cdn_urls: list[str]) -> tuple[str, str, str]:
+    title, author, work_type = "", "", ""
     for db in out_p.rglob("ExploreData.db"):
         try:
             con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
@@ -62,10 +101,14 @@ def collect_from_db(out_p: Path, cdn_urls: list[str]) -> tuple[str, str]:
                 if row:
                     title = title or (row[0] or "")
                     author = author or (row[1] or "")
+            if "作品类型" in cols:
+                row = con.execute("SELECT 作品类型 FROM explore_data LIMIT 1").fetchone()
+                if row:
+                    work_type = work_type or (row[0] or "")
             con.close()
         except Exception as e:
             print(f"读 {db} 失败: {e}", file=sys.stderr)
-    return title, author
+    return title, author, work_type
 
 
 def extract_urls(xhs_dir: str, out_p: Path, url: str) -> dict | None:
@@ -132,10 +175,16 @@ def main() -> int:
     if m:
         author = m.group(1).strip()
 
+    work_type = ""
+    m = re.search(r"作品类型[：:]\s*`?(.+?)`?\s*$", text_blob, re.M)
+    if m:
+        work_type = m.group(1).strip()
+
     cdn_urls: list[str] = []
-    db_title, db_author = collect_from_db(out_p, cdn_urls)
+    db_title, db_author, db_type = collect_from_db(out_p, cdn_urls)
     title = title or db_title
     author = author or db_author
+    work_type = work_type or db_type
     for found in re.findall(r"https?://[^\s\"'<>]+xhscdn[^\s\"'<>]+", text_blob):
         add_url(cdn_urls, found)
 
@@ -148,11 +197,35 @@ def main() -> int:
                 continue
             title = title or item.get("作品标题") or ""
             author = author or item.get("作者昵称") or ""
+            work_type = work_type or str(item.get("作品类型") or "")
             for u in parse_maybe_list(item.get("下载地址") or []):
                 add_url(cdn_urls, u)
 
+    images = [p for p in iter_files(out_p) if p.suffix.lower() in IMAGE_EXT and p.stat().st_size > 0]
+    wt = work_type.strip().lower()
+    if wt in IMAGE_TYPES:
+        kind = "images"
+    elif wt in VIDEO_TYPES:
+        kind = "video"
+    else:
+        # 类型未知：没有音视频、只有图片时按图文处理
+        kind = "images" if (images and not media) else "video"
+
     saved_new: list[Path] = []
-    if not media and cdn_urls:
+    if kind == "images" and not images and cdn_urls:
+        # 图文笔记但图片没下成：按图片补下，后缀按文件头定，不写成 .mp4
+        dest_dir = notes[0].parent if notes else (out_p / "Download" / "manual")
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        for i, img_url in enumerate(cdn_urls, 1):
+            tmp = dest_dir / f"image_{i:02d}.part"
+            if curl_one(img_url, tmp, ua) and sniff_kind(tmp) == "image":
+                dest = tmp.with_suffix(image_suffix(tmp))
+                tmp.replace(dest)
+                images.append(dest)
+            else:
+                tmp.unlink(missing_ok=True)
+                print(f"图片补下失败或不是图片: {img_url}", file=sys.stderr)
+    if kind == "video" and not media and cdn_urls:
         dest_dir = notes[0].parent if notes else (out_p / "Download" / "manual")
         dest_dir.mkdir(parents=True, exist_ok=True)
         for i, media_url in enumerate(cdn_urls, 1):
@@ -160,6 +233,12 @@ def main() -> int:
             suffix = ".m4a" if (".m4a" in lower or ".mp3" in lower) else ".mp4"
             dest = dest_dir / ("video" + suffix if len(cdn_urls) == 1 else f"media_{i:02d}{suffix}")
             if curl_one(media_url, dest, ua):
+                if sniff_kind(dest) == "image":
+                    # 地址其实是图片（例如封面），改回图片后缀，不拿去转录
+                    img = dest.with_suffix(image_suffix(dest))
+                    dest.replace(img)
+                    images.append(img)
+                    continue
                 saved_new.append(dest)
             else:
                 print(f"补下失败: {media_url}", file=sys.stderr)
@@ -168,18 +247,31 @@ def main() -> int:
     if not media:
         media = [p for p in iter_files(out_p) if p.suffix.lower() in MEDIA_EXT and p.stat().st_size > 0]
 
+    if kind == "video" and not media and images:
+        kind = "images"
+
     meta = {
         "platform": "xhs",
+        "kind": kind,
+        "work_type": work_type,
         "url": url,
         "title": title,
         "author": author,
-        "files": [str(p) for p in media],
+        # files 只放可转录的音视频；图文笔记为空，图片在 images
+        "files": [str(p) for p in media] if kind == "video" else [],
+        "images": [str(p) for p in images],
         "notes": [str(p) for p in notes],
         "cdn_urls": cdn_urls,
         "https_fallback_downloaded": [str(p) for p in saved_new],
     }
     (out_p / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
+    if kind == "images":
+        if not images and not notes:
+            print("小红书图文：既没有文案也没有图片，下载失败。", file=sys.stderr)
+            return 4
+        print(f"小红书图文完成 title={title!r} author={author!r} images={len(images)}（不转录）", file=sys.stderr)
+        return 0
     if not media and not notes:
         print("小红书既没有文案也没有媒体，下载失败。", file=sys.stderr)
         return 4
