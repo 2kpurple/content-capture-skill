@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# 内容收录技能的共用变量与小函数。被 setup.sh / collect.sh / 各平台脚本 source。
+# 内容收录技能的共用变量与小函数。被 content-capture / setup.sh / 各平台脚本 source。
 # 本文件只定义函数和默认路径，不在被 source 时直接退出。
 
 # 已加载则跳过，避免重复 source
@@ -51,9 +51,18 @@ cc_slug() {
   python3 -c 'import re,sys; s=re.sub(r"[^\w\u4e00-\u9fff.-]+","_",sys.argv[1]).strip("._") or "item"; print(s[:80])' "$1"
 }
 
+# 从分享口令或任意文本中抽出第一个 URL。没有则输出空行。
+cc_extract_url() {
+  python3 "$SKILL_DIR/scripts/extract_url.py" "$1"
+}
+
 # 识别链接所属平台，输出：douyin|xhs|x|youtube|wechat|unknown
+# 参数可以是纯 URL，也可以是带分享口令的整段文本（会先抽出第一个 URL）。
 cc_detect_platform() {
-  local url="$1"
+  local raw="$1"
+  local url
+  url="$(cc_extract_url "$raw")"
+  [ -n "$url" ] || url="$raw"
   local host
   host="$(python3 -c 'import sys; from urllib.parse import urlparse; u=sys.argv[1].strip();
 p=urlparse(u if "://" in u else "https://"+u); print((p.netloc or "").lower())' "$url")"

@@ -2,7 +2,7 @@
 
 把一条链接变成「文案 + 内容解析」的本地材料。本目录只放我们自己的小脚本，不包含第三方大仓库、虚拟环境、Whisper 模型或 cookie。
 
-配套说明在同目录的 `SKILL.md`（收录格式与解析规则）。这里写开源库、环境变量和脚本用法。
+统一入口是 `content-capture`。配套说明在同目录的 `SKILL.md`（收录格式与解析规则）。
 
 ## 开源库
 
@@ -17,9 +17,9 @@
 | 公众号抓取 | requests、Beautiful Soup 4、lxml、markdownify、Playwright | https://github.com/psf/requests 、https://www.crummy.com/software/BeautifulSoup/ 、https://github.com/lxml/lxml 、https://github.com/matthewwithanm/python-markdownify 、https://github.com/microsoft/playwright-python |
 | Python 环境管理 | uv | https://github.com/astral-sh/uv |
 
-公众号脚本在 `wxfetch/`，方法出自「微信文章捕手」的 wechat-article-fetch（作者：铁柱AGI @cgnot996）。详见 `wxfetch/README.md`。
+公众号脚本在 `wxfetch/`，方法出自「微信文章捕手」的 wechat-article-fetch（作者：铁柱AGI @cgnot996）。详见 `wxfetch/README.md`。由 `content-capture collect` 在识别为公众号后自动调用。
 
-TikTokDownloader 和 XHS-Downloader 由 `setup.sh` 克隆到工具目录，不要把整个仓库拷进本技能文件夹。
+TikTokDownloader 和 XHS-Downloader 由 `content-capture setup` 克隆到工具目录，不要把整个仓库拷进本技能文件夹。
 
 ## 环境变量
 
@@ -31,7 +31,7 @@ TikTokDownloader 和 XHS-Downloader 由 `setup.sh` 克隆到工具目录，不�
 | `CC_VENV` | `~/.local/share/content-capture/venv` | 转录虚拟环境（faster-whisper==1.2.1、av==13.1.0） |
 | `CC_WHISPER_MODEL` | `small` | Whisper 模型名，或本地模型目录 |
 | `CC_DOUYIN_API` | `http://127.0.0.1:5555` | TikTokDownloader Web API 地址 |
-| `CC_MAX_SECONDS` | （空） | 给 `collect.sh` 的默认转录截取秒数 |
+| `CC_MAX_SECONDS` | （空） | 给 `content-capture collect` 的默认转录截取秒数 |
 | `WXFETCH_VENV` | `~/.local/share/wxfetch/venv` | 公众号脚本自己的虚拟环境（见 wxfetch/setup.sh） |
 
 抖音 cookie 只放在 TikTokDownloader 自己的 `Volume/settings.json` 里，本技能不会复制、不会改这个文件，也不会调用 `POST /settings`。
@@ -43,33 +43,45 @@ TikTokDownloader 和 XHS-Downloader 由 `setup.sh` 克隆到工具目录，不�
 ```bash
 # 本机已有工具和模型时，先导出路径再执行
 export CC_TOOLS_DIR=/path/to/tools
-export CC_VENV=/path/to/venv          # 若没有，就让 setup.sh 建默认环境
+export CC_VENV=/path/to/venv          # 若没有，就让 setup 建默认环境
 export CC_WHISPER_MODEL=/path/to/faster-whisper-small
 
-bash setup.sh            # 检查并补齐 yt-dlp、ffmpeg、uv、转录环境、两个下载器、wxfetch
-bash setup.sh --check    # 只检查，缺东西时退出码 1
+./content-capture setup            # 检查并补齐 yt-dlp、ffmpeg、uv、转录环境、两个下载器、wxfetch
+./content-capture doctor           # 只检查依赖、模型、抖音 API、wxfetch 虚拟环境；缺东西时退出码 1
 ```
 
-收录一条链接：
+收录一条链接（视频会下载并转录，公众号自动走 wxfetch）：
 
 ```bash
-./collect.sh <链接> [输出目录]
-./collect.sh --max-seconds 60 <链接> [输出目录]   # 长视频可只转录前 60 秒做连通性测试
-./collect.sh --skip-transcribe <链接> [输出目录]  # 只下载不转录
+./content-capture collect <链接> [输出目录]
+./content-capture collect --max-seconds 60 <链接> [输出目录]   # 长视频可只转录前 60 秒做连通性测试
+./content-capture collect --skip-transcribe <链接> [输出目录]  # 只下载不转录
+./collect.sh <链接> [输出目录]                                 # 兼容壳，等价于 collect
+```
+
+只判断平台（stdout 仅输出 `douyin`、`xhs`、`x`、`youtube`、`wechat` 或 `unknown`；也可从分享口令里抽第一个 URL）：
+
+```bash
+./content-capture detect <链接或分享口令>
+```
+
+单独转录本地音频或视频（默认模型 `small`）：
+
+```bash
+./content-capture transcribe <音频或视频> [--max-seconds N]
 ```
 
 结束时在 stdout 打印 JSON 摘要（平台、标题、作者、文件路径、状态），完整副本在 `<输出目录>/summary.json`。失败会带 `error_code` 和 `message`，退出码非 0。
 
-`collect.sh` 退出码：`0` 成功；`1` 用法错误；`2` 不支持的链接；`3` 依赖缺失；`4` 下载失败；`5` 转录失败；`6` 公众号抓取失败；`10` 工具未就绪。
+`collect` 退出码：`0` 成功；`1` 用法错误；`2` 不支持的链接；`3` 依赖缺失；`4` 下载失败；`5` 转录失败；`6` 公众号抓取失败；`10` 工具未就绪。
 
-也可以单独调用各脚本：
+也可以单独调用各底层脚本：
 
 ```bash
 scripts/douyin.sh  <抖音链接>   <输出目录>
 scripts/xhs.sh     <小红书链接> <输出目录>
 scripts/ytdlp.sh   <X|YouTube 链接> <输出目录>
 $CC_VENV/bin/python scripts/transcribe.py [--out-dir DIR] [--max-seconds N] 输入文件
-wxfetch/wxfetch    <公众号链接> --out <输出目录> --format both --download-images -q
 ```
 
 ## 各平台要点
@@ -78,9 +90,9 @@ wxfetch/wxfetch    <公众号链接> --out <输出目录> --format both --downlo
 - **小红书**：`uv run main.py -l zh_CN -u 链接 --work_path 输出目录 --note_format all --folder_mode true`。视频若因 `http://` xhscdn 返回 500 而失败，会改成 `https://` 用 curl 补下。
 - **X**：普通 `yt-dlp`，带 `--write-info-json`。
 - **YouTube**：`--extractor-args youtube:player_client=android -f 18`。
-- **公众号**：调用 `wxfetch/`，不需要登录。
+- **公众号**：由 `collect` 调用 `wxfetch/`，不需要登录。
 
-转录使用 faster-whisper：`device=cpu`、`compute_type=int8`、`language=zh`、`vad_filter=True`。输入可以是视频或音频；必要时先用 ffmpeg 抽 16 kHz 单声道。输出 `transcript.txt`（带时间戳）和 `transcript_plain.txt`（纯文本）。
+转录使用 faster-whisper，默认模型 `small`：`device=cpu`、`compute_type=int8`、`language=zh`、`vad_filter=True`。输入可以是视频或音频；必要时先用 ffmpeg 抽 16 kHz 单声道。输出 `transcript.txt`（带时间戳）和 `transcript_plain.txt`（纯文本）。
 
 ## 鸣谢
 

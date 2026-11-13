@@ -6,20 +6,21 @@ description: 内容收录：把抖音、小红书、X、YouTube 视频链接或�
 
 把一条链接变成「文案 + 内容解析」的本地 Markdown。全部用本机开源工具，不用付费 API。
 
-脚本都在本技能目录（下文称 `$CC`，即本 SKILL.md 所在文件夹）。用法细节见 `$CC/README.md`。
+脚本都在本技能目录（下文称 `$CC`，即本 SKILL.md 所在文件夹）。统一入口是 `$CC/content-capture`。用法细节见 `$CC/README.md`。
 
 ## 目录结构
 
-- `setup.sh`：幂等安装；`--check` 只自检。
-- `collect.sh`：总入口，按链接域名分派。
+- `content-capture`：统一 CLI 入口（collect / detect / setup / doctor / transcribe）。
+- `collect.sh`：兼容壳，转发到 `content-capture collect`。
+- `setup.sh`：幂等安装；`--check` 只自检。由 `content-capture setup` 调用，其中会再跑 `wxfetch/setup.sh`。
 - `scripts/douyin.sh`、`douyin_parse.py`、`start_douyin_api.py`：抖音。
 - `scripts/xhs.sh`、`xhs_finish.py`、`xhs_extract.py`：小红书。
 - `scripts/ytdlp.sh`：X / YouTube。
 - `scripts/transcribe.py`：语音转文字。
-- `scripts/lib.sh`：公共环境变量。
-- `wxfetch/`：公众号抓取，原样来自「微信文章捕手」的 wechat-article-fetch（作者：铁柱AGI @cgnot996）。
+- `scripts/extract_url.py`、`scripts/lib.sh`：从分享口令抽 URL，并识别平台。
+- `wxfetch/`：公众号抓取，原样来自「微信文章捕手」的 wechat-article-fetch（作者：铁柱AGI @cgnot996）。由 `collect` 在识别为公众号后自动调用。
 
-大仓库（TikTokDownloader、XHS-Downloader）、虚拟环境、Whisper 模型、cookie 都不放进技能文件夹，由 `setup.sh` 装到工具目录。
+大仓库（TikTokDownloader、XHS-Downloader）、虚拟环境、Whisper 模型、cookie 都不放进技能文件夹，由 `content-capture setup` 装到工具目录。
 
 ## 用到的开源库
 
@@ -43,15 +44,18 @@ description: 内容收录：把抖音、小红书、X、YouTube 视频链接或�
 - `CC_DOUYIN_API`：TikTokDownloader Web API 地址，默认 `http://127.0.0.1:5555`。
 - `WXFETCH_VENV`：公众号抓取的虚拟环境，默认 `~/.local/share/wxfetch/venv`。
 
-首次使用运行 `bash $CC/setup.sh`，之后每次先 `bash $CC/setup.sh --check`，非 0 就重新跑安装。抖音需要 cookie，由使用者自己写进 TikTokDownloader 的 `Volume/settings.json`；小红书、X、YouTube、公众号都不需要登录。
+首次使用运行 `$CC/content-capture setup`，之后每次先 `$CC/content-capture doctor`，非 0 就重新跑安装。抖音需要 cookie，由使用者自己写进 TikTokDownloader 的 `Volume/settings.json`；小红书、X、YouTube、公众号都不需要登录。
 
 ## 2. 收录
 
 ```bash
-$CC/collect.sh <链接> [输出目录]
-$CC/collect.sh --max-seconds 60 <链接> [输出目录]   # 只转录前 60 秒，测试用
-$CC/collect.sh --skip-transcribe <链接> [输出目录]
+$CC/content-capture collect <链接> [输出目录]
+$CC/content-capture collect --max-seconds 60 <链接> [输出目录]   # 只转录前 60 秒，测试用
+$CC/content-capture collect --skip-transcribe <链接> [输出目录]
+$CC/collect.sh <链接> [输出目录]   # 等价于 content-capture collect
 ```
+
+`detect` 根据链接域名（或分享口令里的第一个 URL）判断平台：`douyin`、`xhs`、`x`、`youtube`、`wechat`，其余为 `unknown`（含 B 站，暂不支持）。公众号也走 `collect`，识别后自动调用 wxfetch。
 
 stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），含平台、标题、作者、文件路径、状态。退出码：0 成功，1 用法错误，2 不支持的链接，3 依赖缺失，4 下载失败，5 转录失败，6 公众号抓取失败，10 工具未就绪。非 0 就如实告诉使用者，不编内容。
 
@@ -60,8 +64,8 @@ stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），�
 - **小红书**：XHS-Downloader（`-l zh_CN --note_format all --folder_mode true --record_data true`）。xhscdn 的 `http://` 地址会返回 500，脚本会改成 `https://` 用 curl 补下。链接要保留 `xsec_token` 参数。yt-dlp 下小红书常报「No video formats」。
 - **X**：yt-dlp 默认参数。有的视频没有音轨，转录会写 `[无音轨]`。
 - **YouTube**：yt-dlp 加 `--extractor-args "youtube:player_client=android" -f 18`，避开 429。
-- **公众号**：`wxfetch`，先走 HTTP，失败就换 Playwright 无头浏览器；输出 `article.md`（带标题、公众号、作者、发布时间）、`article.json`、`images/`。它自己的退出码：4 反爬（稍后重试一次），5 已删除，6 只能在微信里打开，7 账号迁移，8 付费内容。多篇逐篇跑，篇间停一两秒。
-- **转录**：faster-whisper，CPU、int8、`language=zh`、`vad_filter=True`；输出带时间戳的 `transcript.txt` 和纯文本。
+- **公众号**：`collect` 调用 `wxfetch`，先走 HTTP，失败就换 Playwright 无头浏览器；输出 `article.md`（带标题、公众号、作者、发布时间）、`article.json`、`images/`。它自己的退出码：4 反爬（稍后重试一次），5 已删除，6 只能在微信里打开，7 账号迁移，8 付费内容。多篇逐篇跑，篇间停一两秒。
+- **转录**：faster-whisper，默认模型 `small`，CPU、int8、`language=zh`、`vad_filter=True`；输出带时间戳的 `transcript.txt` 和纯文本。也可用 `content-capture transcribe <音频> [--max-seconds N]` 单独转录。
 
 ## 3. 存档
 

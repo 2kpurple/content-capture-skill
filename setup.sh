@@ -149,7 +149,7 @@ if cc_is_model_path "$CC_WHISPER_MODEL"; then
   cc_ok "Whisper 模型目录: $CC_WHISPER_MODEL"
 else
   case "$CC_WHISPER_MODEL" in
-    small|tiny|base|medium|large-v2|large-v3|distil-small.en|distil-medium.en)
+    small|tiny|base|medium|large-v2|large-v3)
       cc_ok "Whisper 模型名: $CC_WHISPER_MODEL（首次转录时由 faster-whisper 按需下载）"
       ;;
     *)
