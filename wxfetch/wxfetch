@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# 便捷入口：./wxfetch <url> [options]   |   ./wxfetch doctor [--fix]
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VPY="${WXFETCH_VENV:-$HOME/.local/share/wxfetch/venv}/bin/python"
+if [ -x "$VPY" ]; then exec "$VPY" "$DIR/scripts/wxfetch.py" "$@"; else exec python3 "$DIR/scripts/wxfetch.py" "$@"; fi

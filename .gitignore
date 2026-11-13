@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.venv/
+Volume/
+*.mp4
+*.m4a
+*.wav
