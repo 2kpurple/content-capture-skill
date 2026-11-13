@@ -6,6 +6,7 @@
 #   content-capture setup   [--check]
 #   content-capture doctor
 #   content-capture transcribe <音频> [--max-seconds N] [--language L]
+#   content-capture index add --doc 正文.md --title T --platform P --tags T --summary S [--url 原链接] [--index 索引.md]
 #   content-capture help | --help
 #   content-capture --version
 #
@@ -33,11 +34,13 @@ cmd_help() {
 content-capture — 把一条链接变成文案 + 内容解析（抖音、小红书、X、YouTube、微信公众号）
 
 用法:
-  content-capture collect [--max-seconds N] [--language L] [--skip-transcribe] <链接> [输出目录]
+  content-capture collect [--max-seconds N] [--language L] [--skip-transcribe] [--index 索引.md] <链接> [输出目录]
   content-capture detect <链接或分享口令>
   content-capture setup [--check]
   content-capture doctor
   content-capture transcribe <音频> [--max-seconds N] [--language L]
+  content-capture index add --doc <正文.md> --title <标题> --platform <平台> --tags <标签> --summary <摘要> [--url <原链接>] [--index <索引.md>]
+  content-capture index path [--index <索引.md>]
   content-capture help | --help
   content-capture --version
 
@@ -52,6 +55,12 @@ content-capture — 把一条链接变成文案 + 内容解析（抖音、小红
 --language L   转录语言：auto（自动识别）、zh、en……也可用环境变量 CC_LANGUAGE。
                collect 不指定时：抖音、小红书默认 zh；X、YouTube 默认 auto。
 抖音图集、小红书图文只保存图片和文案，不做转录。
+
+index        维护总索引 索引.md（5 列：标题 | 来源（平台） | 标签 | 摘要 | 文档链接）。
+             同一原链接或同一正文文档只更新那一行。collect 成功后会按原链接预留一行
+             （标签、摘要留空），summary.json 的 doc 字段是正文 Markdown 应写到的路径。
+             索引位置：--index > CC_INDEX_FILE > $CC_OUTPUT_ROOT/索引.md；
+             CC_OUTPUT_ROOT 默认 ./content-capture-out，可写进 ~/.config/content-capture/config.sh。
 
 collect 退出码：0 成功；1 用法错误；2 不支持的链接；3 依赖缺失；
 4 下载失败；5 转录失败；6 公众号抓取失败；10 工具未就绪。
@@ -85,6 +94,8 @@ cmd_doctor() {
   echo "   tools=$CC_TOOLS_DIR" >&2
   echo "   venv=$CC_VENV" >&2
   echo "   whisper=$CC_WHISPER_MODEL" >&2
+  echo "   output_root=$CC_OUTPUT_ROOT" >&2
+  echo "   index=$CC_INDEX_FILE" >&2
 
   if command -v yt-dlp >/dev/null 2>&1; then
     cc_ok "依赖 yt-dlp: $(yt-dlp --version 2>/dev/null | head -1)"
@@ -249,16 +260,31 @@ cmd_transcribe() {
   "${args[@]}"
 }
 
+# ---------- index ----------
+cmd_index() {
+  if [ $# -eq 0 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    python3 "$SKILL_DIR/scripts/cc_index.py" --help
+    [ $# -eq 0 ] && exit 1
+    exit 0
+  fi
+  case "$1" in
+    add|path) ;;
+    *) cc_err "未知 index 子命令: $1（可用: add、path）"; exit 1 ;;
+  esac
+  CC_INDEX_FILE="$CC_INDEX_FILE" CC_OUTPUT_ROOT="$CC_OUTPUT_ROOT" python3 "$SKILL_DIR/scripts/cc_index.py" "$@"
+}
+
 # ---------- collect（原 collect.sh 逻辑） ----------
 cmd_collect() {
   local MAX_SECONDS="${CC_MAX_SECONDS:-}"
   local SKIP_TRANSCRIBE=0
   local LANGUAGE="${CC_LANGUAGE:-}"
+  local INDEX_FILE="$CC_INDEX_FILE"
   local URL=""
   local OUT=""
 
   collect_usage() {
-    echo "用法: content-capture collect [--max-seconds N] [--language auto|zh|en|...] [--skip-transcribe] <链接> [输出目录]" >&2
+    echo "用法: content-capture collect [--max-seconds N] [--language auto|zh|en|...] [--skip-transcribe] [--index 索引.md] <链接> [输出目录]" >&2
     exit 1
   }
 
@@ -282,6 +308,15 @@ cmd_collect() {
         ;;
       --language=*)
         LANGUAGE="${1#--language=}"
+        shift
+        ;;
+      --index)
+        [ $# -ge 2 ] || collect_usage
+        INDEX_FILE="$2"
+        shift 2
+        ;;
+      --index=*)
+        INDEX_FILE="${1#--index=}"
         shift
         ;;
       --)
@@ -315,7 +350,7 @@ cmd_collect() {
   fi
 
   if [ -z "$OUT" ]; then
-    OUT="$(pwd)/content-capture-out/$(date +%Y%m%d-%H%M%S)-$(cc_slug "$URL")"
+    OUT="$CC_OUTPUT_ROOT/$(date +%Y%m%d-%H%M%S)-$(cc_slug "$URL")"
   fi
   mkdir -p "$OUT"
   OUT="$(cd "$OUT" && pwd)"
@@ -325,8 +360,9 @@ cmd_collect() {
   local SUMMARY="$OUT/summary.json"
 
   write_summary() {
+    CC_INDEX_PY="$SKILL_DIR/scripts/cc_index.py" CC_INDEX_FILE="$INDEX_FILE" \
     python3 - "$SUMMARY" "$OUT" "$URL" "$PLATFORM" "$1" "$2" "$3" <<'PY'
-import json, sys
+import json, os, subprocess, sys
 from pathlib import Path
 
 summary_path, out, url, platform, ok, code, message = sys.argv[1:8]
@@ -405,6 +441,21 @@ payload = {
     "out_dir": out,
     "files": files,
 }
+if payload["ok"]:
+    # 收录成功：按原链接在总索引里预留一行（标签、摘要留空），doc 是正文 Markdown 应写的位置
+    index_file = os.path.abspath(os.path.expanduser(os.environ["CC_INDEX_FILE"]))
+    r = subprocess.run(
+        [sys.executable, os.environ["CC_INDEX_PY"], "reserve", "--url", url, "--platform", platform,
+         "--title", title, "--index", index_file],
+        capture_output=True, text=True,
+    )
+    payload["index"] = index_file
+    if r.returncode == 0 and r.stdout.strip():
+        payload["doc"] = r.stdout.strip().splitlines()[-1]
+    else:
+        payload["doc"] = None
+        payload["index_error"] = (r.stderr or "").strip()[-500:] or f"退出码 {r.returncode}"
+        print("  [ERR ] 总索引预留失败: " + payload["index_error"], file=sys.stderr)
 Path(summary_path).write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 print(json.dumps(payload, ensure_ascii=False, indent=2))
 PY
@@ -548,6 +599,7 @@ case "$1" in
   setup) shift; cmd_setup "$@" ;;
   doctor) shift; cmd_doctor "$@" ;;
   transcribe) shift; cmd_transcribe "$@" ;;
+  index) shift; cmd_index "$@" ;;
   help|-h|--help) cmd_help; exit 0 ;;
   --version|-V|version) cmd_version; exit 0 ;;
   *)

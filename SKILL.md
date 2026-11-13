@@ -10,7 +10,7 @@ description: 内容收录：把抖音、小红书、X、YouTube 视频链接或�
 
 ## 目录结构
 
-- `content-capture`：统一 CLI 入口（collect / detect / setup / doctor / transcribe）。
+- `content-capture`：统一 CLI 入口（collect / detect / setup / doctor / transcribe / index）。
 - `collect.sh`：兼容壳，转发到 `content-capture collect`。
 - `setup.sh`：幂等安装；`--check` 只自检。由 `content-capture setup` 调用，其中会再跑 `wxfetch/setup.sh`。
 - `scripts/douyin.sh`、`douyin_parse.py`、`start_douyin_api.py`：抖音。
@@ -18,6 +18,7 @@ description: 内容收录：把抖音、小红书、X、YouTube 视频链接或�
 - `scripts/ytdlp.sh`：X / YouTube。
 - `scripts/transcribe.py`：语音转文字。
 - `scripts/extract_url.py`、`scripts/lib.sh`：从分享口令抽 URL，并识别平台。
+- `scripts/cc_index.py`：维护总索引 `索引.md`（由 `content-capture index` 调用）。
 - `wxfetch/`：公众号抓取，原样来自「微信文章捕手」的 wechat-article-fetch（作者：铁柱AGI @cgnot996）。由 `collect` 在识别为公众号后自动调用。
 
 大仓库（TikTokDownloader、XHS-Downloader）、虚拟环境、Whisper 模型、cookie 都不放进技能文件夹，由 `content-capture setup` 装到工具目录。
@@ -43,6 +44,10 @@ description: 内容收录：把抖音、小红书、X、YouTube 视频链接或�
 - `CC_WHISPER_MODEL`：Whisper 模型名或本地路径，默认 `small`。
 - `CC_DOUYIN_API`：TikTokDownloader Web API 地址，默认 `http://127.0.0.1:5555`。
 - `WXFETCH_VENV`：公众号抓取的虚拟环境，默认 `~/.local/share/wxfetch/venv`。
+- `CC_OUTPUT_ROOT`：收录根目录，默认当前目录下的 `content-capture-out`。每条的素材目录、正文 Markdown 和总索引都在这里。
+- `CC_INDEX_FILE`：总索引文件，默认 `$CC_OUTPUT_ROOT/索引.md`；单次可用 `--index` 覆盖。
+
+每台机器固定的默认值（比如收录根目录）写进 `~/.config/content-capture/config.sh`（普通 shell 赋值，如 `CC_OUTPUT_ROOT=/某个目录/内容收录`），不要写进技能文件夹。已导出的环境变量优先于这个文件。
 
 首次使用运行 `$CC/content-capture setup`，之后每次先 `$CC/content-capture doctor`，非 0 就重新跑安装。抖音需要 cookie，由使用者自己写进 TikTokDownloader 的 `Volume/settings.json`；小红书、X、YouTube、公众号都不需要登录。
 
@@ -52,12 +57,13 @@ description: 内容收录：把抖音、小红书、X、YouTube 视频链接或�
 $CC/content-capture collect <链接> [输出目录]
 $CC/content-capture collect --max-seconds 60 <链接> [输出目录]   # 只转录前 60 秒，测试用
 $CC/content-capture collect --skip-transcribe <链接> [输出目录]
+$CC/content-capture collect --index <索引.md> <链接>          # 本次写到指定索引
 $CC/collect.sh <链接> [输出目录]   # 等价于 content-capture collect
 ```
 
 `detect` 根据链接域名（或分享口令里的第一个 URL）判断平台：`douyin`、`xhs`、`x`、`youtube`、`wechat`，其余为 `unknown`（含 B 站，暂不支持）。公众号也走 `collect`，识别后自动调用 wxfetch。
 
-stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），含平台、标题、作者、文件路径、状态。退出码：0 成功，1 用法错误，2 不支持的链接，3 依赖缺失，4 下载失败，5 转录失败，6 公众号抓取失败，10 工具未就绪。非 0 就如实告诉使用者，不编内容。
+stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），含平台、标题、作者、文件路径、状态。收录成功时还有 `index`（总索引路径）和 `doc`（这一条正文 Markdown 要写到的路径），collect 已按原链接在索引里预留了一行（标签、摘要为空）。退出码：0 成功，1 用法错误，2 不支持的链接，3 依赖缺失，4 下载失败，5 转录失败，6 公众号抓取失败，10 工具未就绪。非 0 就如实告诉使用者，不编内容。
 
 各平台做法（脚本已实现，排障时参考）：
 - **抖音**：TikTokDownloader Web API。没启动时用 `scripts/start_douyin_api.py` 非交互启动。`POST /douyin/share` 拿作品 ID，`POST /douyin/detail` 取 `data.downloads`，curl 带浏览器 UA 和 `Referer: https://www.douyin.com/` 下载。不调用 `POST /settings`，不改它的全局配置。直接用 yt-dlp 下抖音常被 403。
@@ -67,9 +73,27 @@ stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），�
 - **公众号**：`collect` 调用 `wxfetch`，先走 HTTP，失败就换 Playwright 无头浏览器；输出 `article.md`（带标题、公众号、作者、发布时间）、`article.json`、`images/`。它自己的退出码：4 反爬（稍后重试一次），5 已删除，6 只能在微信里打开，7 账号迁移，8 付费内容。多篇逐篇跑，篇间停一两秒。
 - **转录**：faster-whisper，默认模型 `small`，CPU、int8、`vad_filter=True`；语言默认抖音/小红书 `zh`、X/YouTube 自动识别，可用 `--language auto|zh|en|...` 覆盖。输出带时间戳的 `transcript.txt` 和纯文本。也可用 `content-capture transcribe <音频> [--max-seconds N] [--language L]` 单独转录。抖音图集、小红书图文只存图片和文案（summary 里 `kind: images`），不转录；文件损坏或没有音轨时 collect 报失败（退出码 5）。
 
-## 3. 存档
+## 3. 存档（必做，每条都要走完）
 
-每条一个 Markdown，文件名 `日期-平台-标题.md`，内容：
+每条收录成功后，**必须**按顺序做完下面两步，缺一步都不算收录完成：
+
+1. **写正文 Markdown**：路径用 summary.json 里的 `doc`（`$CC_OUTPUT_ROOT/日期-平台-标题.md`，collect 已算好；同名冲突时自动加 `-2`）。不要自己另起文件名。
+2. **更新总索引**：正文写好后立刻登记，带上标签和摘要：
+
+   ```bash
+   $CC/content-capture index add --doc "<doc 路径>" --url "<原链接>" \
+     --title "<标题>" --platform <douyin|xhs|x|youtube|wechat> \
+     --tags "标签1,标签2,标签3" --summary "一两句话说清这条讲了什么、值得借鉴的点"
+   ```
+
+   - 同一原链接或同一文档再执行只会更新那一行，不会重复；改标签、摘要也用这条命令。
+   - `--doc` 必须是已经写好的 .md，不存在会报错（退出码 1）。
+   - 标签 3～5 个，用逗号或顿号分隔；摘要一两句，不贴长文案。
+   - 退出码非 0 就如实告诉使用者，不要手改 `索引.md` 的表格。
+
+总索引 `索引.md` 是一张 5 列表格：标题 | 来源（平台） | 标签 | 摘要 | 文档链接。来源列是带原链接的平台名，文档链接是相对索引文件的链接，中文、空格都能直接点开。
+
+正文 Markdown 文件名 `日期-平台-标题.md`，内容：
 - 标题、来源平台、原链接、作者/账号（公众号加发布时间）
 - 钩子（视频前 3 秒或文章开头）
 - 结构拆解
@@ -77,7 +101,7 @@ stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），�
 - 可以借鉴改写的方向（只为做自己的原创）
 - 文案全文：视频转录原话照记，不润色，听不清处标「[听不清]」，同音错字另列「可能的识别错误」；公众号保留原文。
 
-聊天里只给解析要点和文件路径，长文案不全贴。
+聊天里只给解析要点、正文路径和索引路径，长文案不全贴。
 
 ## 规则
 - 链接失效、要登录、下载失败就直说，不编内容。

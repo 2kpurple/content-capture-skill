@@ -33,6 +33,9 @@ TikTokDownloader 和 XHS-Downloader 由 `content-capture setup` 克隆到工具�
 | `CC_DOUYIN_API` | `http://127.0.0.1:5555` | TikTokDownloader Web API 地址 |
 | `CC_MAX_SECONDS` | （空） | 给 `content-capture collect` 的默认转录截取秒数 |
 | `WXFETCH_VENV` | `~/.local/share/wxfetch/venv` | 公众号脚本自己的虚拟环境（见 wxfetch/setup.sh） |
+| `CC_OUTPUT_ROOT` | `./content-capture-out` | 收录根目录：collect 默认素材目录、正文 Markdown、总索引都在这里 |
+| `CC_INDEX_FILE` | `$CC_OUTPUT_ROOT/索引.md` | 总索引文件（`--index` 可单次覆盖） |
+| `CC_CONFIG` | `~/.config/content-capture/config.sh` | 本机配置文件（可选，普通 shell 赋值），只补没导出的变量 |
 
 抖音 cookie 只放在 TikTokDownloader 自己的 `Volume/settings.json` 里，本技能不会复制、不会改这个文件，也不会调用 `POST /settings`。
 
@@ -56,6 +59,7 @@ export CC_WHISPER_MODEL=/path/to/faster-whisper-small
 ./content-capture collect <链接> [输出目录]
 ./content-capture collect --max-seconds 60 <链接> [输出目录]   # 长视频可只转录前 60 秒做连通性测试
 ./content-capture collect --skip-transcribe <链接> [输出目录]  # 只下载不转录
+./content-capture collect --index <索引.md> <链接>             # 本次登记到指定索引
 ./collect.sh <链接> [输出目录]                                 # 兼容壳，等价于 collect
 ```
 
@@ -64,6 +68,28 @@ export CC_WHISPER_MODEL=/path/to/faster-whisper-small
 ```bash
 ./content-capture detect <链接或分享口令>
 ```
+
+## 总索引 `索引.md`
+
+收录根目录下维护一张总索引表，固定 5 列：
+
+| 标题 | 来源（平台） | 标签 | 摘要 | 文档链接 |
+|---|---|---|---|---|
+
+- **来源（平台）** 写成 `[抖音](<原链接>)`，原链接就是这一行的主键。
+- **文档链接** 是相对索引文件位置的链接，指向这一条的正文 `日期-平台-标题.md`；中文、空格放在 `<>` 里，`%`、`#`、`?`、`|` 会百分号编码，按 CommonMark / GFM 规则解析后都能直接点开。
+- 标题、标签、摘要里的 `|` 会转义成 `\|`，换行写成 `<br>`。
+- 同一原链接或同一正文文档只占一行，再登记只会更新。写入先写临时文件再原子替换，并加文件锁，多个任务同时写也不会丢行。表格外手写的内容会保留。
+
+`collect` 成功后会按原链接预留一行（标签、摘要为空），summary.json 里的 `doc` 是正文要写到的路径。写好正文后用 `index add` 补上标签和摘要：
+
+```bash
+./content-capture index add --doc <正文.md> --title <标题> --platform <douyin|xhs|x|youtube|wechat> \
+  --tags "标签1,标签2" --summary "一两句摘要" [--url <原链接>] [--index <索引.md>]
+./content-capture index path [--index <索引.md>]   # 输出当前使用的索引文件
+```
+
+索引位置的优先级：`--index` > `CC_INDEX_FILE` > `$CC_OUTPUT_ROOT/索引.md`。想让某台机器固定用某个目录，写进 `~/.config/content-capture/config.sh`，例如 `CC_OUTPUT_ROOT=/path/to/内容收录`。
 
 单独转录本地音频或视频（默认模型 `small`）：
 

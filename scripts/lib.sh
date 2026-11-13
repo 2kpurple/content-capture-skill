@@ -16,7 +16,25 @@ fi
 # 常用可执行文件可能装在用户目录
 export PATH="${HOME}/.local/bin:${PATH}"
 
+# ---------- 本机配置（可选） ----------
+# 每台机器自己的默认值（例如收录根目录）写在这里，不进仓库：
+#   ${XDG_CONFIG_HOME:-~/.config}/content-capture/config.sh
+# 内容是普通 shell 赋值，例如 CC_OUTPUT_ROOT=/path/to/内容收录 。已导出的环境变量优先。
+: "${CC_CONFIG:=${XDG_CONFIG_HOME:-${HOME}/.config}/content-capture/config.sh}"
+if [ -f "$CC_CONFIG" ]; then
+  # 只补没设置的变量：先记下已导出的 CC_* 值，加载后再还原
+  _cc_saved_env="$(export -p | grep -E '^declare -x CC_[A-Z_]+=' || true)"
+  # shellcheck disable=SC1090
+  . "$CC_CONFIG" || printf '  [ERR ] 读取配置失败: %s\n' "$CC_CONFIG" >&2
+  eval "$_cc_saved_env"
+  unset _cc_saved_env
+fi
+
 # ---------- 可覆盖的环境变量 ----------
+# 收录根目录：collect 默认把每条的素材目录建在这里，正文 Markdown 和总索引也放这里
+: "${CC_OUTPUT_ROOT:=${PWD}/content-capture-out}"
+# 总索引（Markdown 表格）
+: "${CC_INDEX_FILE:=${CC_OUTPUT_ROOT}/索引.md}"
 # 工具目录：下面放 TikTokDownloader、XHS-Downloader
 # 本机若已有，请设为现成目录，不要再 clone。
 : "${CC_TOOLS_DIR:=${HOME}/.local/share/content-capture/tools}"
