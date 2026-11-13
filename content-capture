@@ -135,6 +135,12 @@ cmd_doctor() {
     cc_bad "依赖 转录环境未就绪: $CC_VENV"
     missing=1
   fi
+  if [ -x "$py" ] && "$py" -c 'from opencc import OpenCC; assert OpenCC("t2s").convert("測試") == "测试"' >/dev/null 2>&1; then
+    cc_ok "依赖 OpenCC 繁转简: $("$py" -c 'import importlib.metadata as m; print("opencc-python-reimplemented", m.version("opencc-python-reimplemented"))' 2>/dev/null || echo opencc)"
+  else
+    cc_bad "依赖 OpenCC 繁转简（中文文案可能含繁体；运行 content-capture setup 补装 opencc-python-reimplemented）"
+    missing=1
+  fi
 
   if [ -f "$CC_TIKTOK_DIR/main.py" ]; then
     cc_ok "依赖 TikTokDownloader: $CC_TIKTOK_DIR"

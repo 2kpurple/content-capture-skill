@@ -8,6 +8,12 @@
   CC_VENV            转录虚拟环境（本脚本建议用该环境的 python 启动）
   CC_WHISPER_MODEL   模型名（默认 small）或本地模型目录
   CC_LANGUAGE        默认识别语言；不设或设为 auto 时自动识别
+  CC_ZH_PROMPT       中文转录的提示词，默认「以下是普通话的句子。」
+
+中文统一输出简体：
+  语言为 zh（指定 zh，或自动识别结果是 zh）时，用 language=zh 加简体提示词
+  （initial_prompt）转录，再用 OpenCC t2s 把文字转成简体兜底。
+  OpenCC 不在时照常转录，但会明确警告“可能含繁体”。
 
 退出码:
   0 成功；1 用法错误或找不到输入；3 依赖缺失（ffmpeg / ffprobe / faster-whisper）；
@@ -26,6 +32,34 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+
+
+# 引导 Whisper 输出简体中文的提示词（本身用简体书写）。可用 CC_ZH_PROMPT 覆盖。
+# 没用「……使用简体中文。」这类说明句：small 模型偶尔会把这半句原样写进文案。
+ZH_PROMPT = os.environ.get("CC_ZH_PROMPT") or "以下是普通话的句子。"
+
+_t2s = None
+
+
+def to_simplified(text: str) -> str:
+    """OpenCC 繁转简。OpenCC 不可用时抛 ImportError。"""
+    global _t2s
+    if _t2s is None:
+        from opencc import OpenCC  # opencc-python-reimplemented（纯 Python）或官方 opencc
+
+        try:
+            _t2s = OpenCC("t2s")
+        except Exception:
+            _t2s = OpenCC("t2s.json")
+    return _t2s.convert(text)
+
+
+def opencc_available() -> bool:
+    try:
+        to_simplified("測")
+        return True
+    except Exception:
+        return False
 
 
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".aac", ".ogg", ".opus", ".flac"}
@@ -123,18 +157,32 @@ def main() -> int:
         model_id = resolve_model(args.model)
         log(f"加载模型: {model_id}  device=cpu compute_type=int8")
         model = WhisperModel(model_id, device="cpu", compute_type="int8")
-        segments, info = model.transcribe(
-            str(wav),
-            language=language,
-            vad_filter=True,
-            beam_size=5,
-        )
+        opts = dict(vad_filter=True, beam_size=5)
+        if language == "zh":
+            segments, info = model.transcribe(str(wav), language="zh", initial_prompt=ZH_PROMPT, **opts)
+        else:
+            # segments 是惰性生成器，info.language 在这里已经确定；
+            # 自动识别成中文时丢掉这次结果，按 zh + 简体提示词重新转录（只多花一次语言检测）
+            segments, info = model.transcribe(str(wav), language=language, **opts)
+            if language is None and info.language == "zh":
+                log("自动识别为中文，改用 language=zh + 简体提示词转录")
+                segments, info = model.transcribe(str(wav), language="zh", initial_prompt=ZH_PROMPT, **opts)
+        is_zh = info.language == "zh"
         log(f"language={info.language}" + ("（自动识别）" if language is None else "") + f" duration={getattr(info, 'duration', None)}")
+        t2s = None
+        if is_zh:
+            if opencc_available():
+                t2s = to_simplified
+            else:
+                log("警告: 没有 OpenCC（opencc-python-reimplemented），中文文案只靠提示词转简体，可能仍含繁体字。"
+                    "请运行 content-capture setup 补装。")
 
         lines = []
         texts = []
         for seg in segments:
             text = (seg.text or "").strip()
+            if t2s is not None:
+                text = t2s(text)
             if not text:
                 continue
             line = f"[{seg.start:.2f}s -> {seg.end:.2f}s] {text}"
@@ -142,7 +190,7 @@ def main() -> int:
             texts.append(text)
         stamped.write_text(("\n".join(lines) + ("\n" if lines else "")), encoding="utf-8")
         plain.write_text(("\n".join(texts) + ("\n" if texts else "")), encoding="utf-8")
-        log(f"已写入 {stamped} 和 {plain}  segments={len(lines)}")
+        log(f"已写入 {stamped} 和 {plain}  segments={len(lines)}" + ("  （已用 OpenCC 转为简体）" if t2s else ""))
         return 0
     except Exception as e:
         log(f"转录失败: {e}")

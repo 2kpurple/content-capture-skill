@@ -123,11 +123,14 @@ avv = m.version("av")
 assert fw.startswith("1.2."), fw
 # PyAV 19 与 faster-whisper 1.2 不兼容，要求 13.x
 assert avv.startswith("13."), avv
+# 中文转简体（纯 Python，Linux / macOS 都不需要系统库）
+from opencc import OpenCC
+assert OpenCC("t2s").convert("測試") == "测试"
 PY
 }
 
 if venv_ok; then
-  cc_ok "转录环境: $CC_VENV (faster-whisper 1.2.x + av 13.x)"
+  cc_ok "转录环境: $CC_VENV (faster-whisper 1.2.x + av 13.x + OpenCC)"
 else
   cc_bad "转录环境未就绪: $CC_VENV"
   if [ "$MODE" = check ]; then
@@ -137,15 +140,15 @@ else
       cc_err "没有 uv，无法创建转录环境"
       MISSING=1
     else
-      cc_info "创建/修复转录环境并安装 faster-whisper==1.2.1 av==13.1.0"
+      cc_info "创建/修复转录环境并安装 faster-whisper==1.2.1 av==13.1.0 opencc-python-reimplemented==0.1.7"
       mkdir -p "$(dirname "$CC_VENV")"
       if [ ! -x "${CC_VENV}/bin/python" ]; then
         uv venv "$CC_VENV" || { cc_err "uv venv 失败"; MISSING=1; }
       fi
       if [ -x "${CC_VENV}/bin/python" ]; then
-        uv pip install --python "${CC_VENV}/bin/python" "faster-whisper==1.2.1" "av==13.1.0" \
+        uv pip install --python "${CC_VENV}/bin/python" "faster-whisper==1.2.1" "av==13.1.0" "opencc-python-reimplemented==0.1.7" \
           && venv_ok && cc_ok "转录环境已就绪" \
-          || { cc_err "转录依赖安装失败（需要 faster-whisper==1.2.1 和 av==13.1.0）"; MISSING=1; }
+          || { cc_err "转录依赖安装失败（需要 faster-whisper==1.2.1、av==13.1.0、opencc-python-reimplemented==0.1.7）"; MISSING=1; }
       fi
     fi
   fi

@@ -28,9 +28,10 @@ TikTokDownloader 和 XHS-Downloader 由 `content-capture setup` 克隆到工具�
 | `CC_TOOLS_DIR` | `~/.local/share/content-capture/tools` | 工具根目录（其下是 `TikTokDownloader`、`XHS-Downloader`）。本机已有时请指到现成目录，不要重复 clone。 |
 | `CC_TIKTOK_DIR` | `$CC_TOOLS_DIR/TikTokDownloader` | 抖音工具目录（可单独覆盖） |
 | `CC_XHS_DIR` | `$CC_TOOLS_DIR/XHS-Downloader` | 小红书工具目录（可单独覆盖） |
-| `CC_VENV` | `~/.local/share/content-capture/venv` | 转录虚拟环境（faster-whisper==1.2.1、av==13.1.0） |
+| `CC_VENV` | `~/.local/share/content-capture/venv` | 转录虚拟环境（faster-whisper==1.2.1、av==13.1.0、opencc-python-reimplemented==0.1.7） |
 | `CC_WHISPER_MODEL` | `small` | Whisper 模型名，或本地模型目录 |
 | `CC_DOUYIN_API` | `http://127.0.0.1:5555` | TikTokDownloader Web API 地址 |
+| `CC_ZH_PROMPT` | `以下是普通话的句子。` | 中文转录时给 Whisper 的简体提示词（initial_prompt） |
 | `CC_MAX_SECONDS` | （空） | 给 `content-capture collect` 的默认转录截取秒数 |
 | `WXFETCH_VENV` | `~/.local/share/wxfetch/venv` | 公众号脚本自己的虚拟环境（见 wxfetch/setup.sh） |
 | `CC_OUTPUT_ROOT` | `./content-capture-out` | 收录根目录：collect 默认素材目录、正文 Markdown、总索引都在这里 |
@@ -118,7 +119,11 @@ $CC_VENV/bin/python scripts/transcribe.py [--out-dir DIR] [--max-seconds N] [--l
 - **YouTube**：`--extractor-args youtube:player_client=android -f 18`。
 - **公众号**：由 `collect` 调用 `wxfetch/`，不需要登录。
 
-转录使用 faster-whisper，默认模型 `small`：`device=cpu`、`compute_type=int8`、`vad_filter=True`。语言：collect 对抖音、小红书默认 `zh`，对 X、YouTube 默认自动识别；可用 `--language`（或环境变量 `CC_LANGUAGE`）覆盖，`auto` 表示自动识别。抖音图集、小红书图文只保存图片和文案，不转录。文件损坏、ffprobe 读不了或没有音轨时，collect 以退出码 5 报失败。输入可以是视频或音频；必要时先用 ffmpeg 抽 16 kHz 单声道。输出 `transcript.txt`（带时间戳）和 `transcript_plain.txt`（纯文本）。
+转录使用 faster-whisper，默认模型 `small`：`device=cpu`、`compute_type=int8`、`vad_filter=True`。语言：collect 对抖音、小红书默认 `zh`，对 X、YouTube 默认自动识别；可用 `--language`（或环境变量 `CC_LANGUAGE`）覆盖，`auto` 表示自动识别。
+
+**中文统一输出简体**：faster-whisper small 常把中文转成繁体。现在语言是 `zh` 时（直接指定，或自动识别结果是 `zh`——先用一次语言检测，再按 `zh` + 简体提示词正式转录），会传 `language=zh` 和 `initial_prompt`（默认「以下是普通话的句子。」，可用 `CC_ZH_PROMPT` 改），转完再用 OpenCC t2s 把每一段文字转成简体，`transcript.txt` 和 `transcript_plain.txt` 都会处理。OpenCC 用纯 Python 的 `opencc-python-reimplemented`，Linux、macOS 都不需要系统库，由 `content-capture setup` 装进转录环境，`doctor` 会检查。缺 OpenCC 时转录照常完成，但会在日志里明确警告「可能仍含繁体字」。英文等其他语言不受影响。
+
+抖音图集、小红书图文只保存图片和文案，不转录。文件损坏、ffprobe 读不了或没有音轨时，collect 以退出码 5 报失败。输入可以是视频或音频；必要时先用 ffmpeg 抽 16 kHz 单声道。输出 `transcript.txt`（带时间戳）和 `transcript_plain.txt`（纯文本）。
 
 ## 鸣谢
 
