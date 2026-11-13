@@ -1,4 +1,4 @@
-# 视频与文章收录（技能脚本）
+# content-capture（内容收录）
 
 把一条链接变成「文案 + 内容解析」的本地材料。本目录只放我们自己的小脚本，不包含第三方大仓库、虚拟环境、Whisper 模型或 cookie。
 
@@ -81,3 +81,21 @@ wxfetch/wxfetch    <公众号链接> --out <输出目录> --format both --downlo
 - **公众号**：调用 `wxfetch/`，不需要登录。
 
 转录使用 faster-whisper：`device=cpu`、`compute_type=int8`、`language=zh`、`vad_filter=True`。输入可以是视频或音频；必要时先用 ffmpeg 抽 16 kHz 单声道。输出 `transcript.txt`（带时间戳）和 `transcript_plain.txt`（纯文本）。
+
+## 鸣谢
+
+本项目只是把下面这些优秀的开源项目和方法串成一个收录流程，核心能力都来自它们。感谢各位作者和贡献者：
+
+- [TikTokDownloader（DouK-Downloader）](https://github.com/JoeanAmier/TikTokDownloader)，作者 [JoeanAmier](https://github.com/JoeanAmier)：抖音作品解析与下载。
+- [XHS-Downloader](https://github.com/JoeanAmier/XHS-Downloader)，作者 [JoeanAmier](https://github.com/JoeanAmier)：小红书笔记与视频下载。
+- [yt-dlp](https://github.com/yt-dlp/yt-dlp)，yt-dlp 社区：X、YouTube 视频下载。
+- [FFmpeg](https://ffmpeg.org)：抽取音频、转换格式。
+- [faster-whisper](https://github.com/SYSTRAN/faster-whisper)，SYSTRAN：本地语音转文字。
+- [Whisper](https://github.com/openai/whisper)，OpenAI：语音识别模型。
+- [CTranslate2](https://github.com/OpenNMT/CTranslate2)，OpenNMT：faster-whisper 的推理引擎。
+- [PyAV](https://github.com/PyAV-Org/PyAV)：音频解码。
+- 微信公众号抓取脚本 `wxfetch/`：来自「微信文章捕手」的 wechat-article-fetch，作者 铁柱AGI（X：[@cgnot996](https://x.com/cgnot996)，公众号同名）。
+- [Requests](https://github.com/psf/requests)、[Beautiful Soup](https://www.crummy.com/software/BeautifulSoup/)、[lxml](https://github.com/lxml/lxml)、[markdownify](https://github.com/matthewwithanm/python-markdownify)、[Playwright for Python](https://github.com/microsoft/playwright-python)：公众号网页请求、解析、转 Markdown 和浏览器降级。
+- [uv](https://github.com/astral-sh/uv)，Astral：Python 环境与依赖管理。
+
+各项目的版权和许可证归原作者所有，使用时请遵守各自的许可证。
