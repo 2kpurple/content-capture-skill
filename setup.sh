@@ -154,24 +154,27 @@ else
   fi
 fi
 
-# ---------- 3. Whisper 模型路径（只检查，不在这里下载大模型） ----------
-if cc_is_model_path "$CC_WHISPER_MODEL"; then
-  cc_ok "Whisper 模型目录: $CC_WHISPER_MODEL"
+# ---------- 3. Whisper 模型 ----------
+# CC_WHISPER_MODEL 是本地目录就只检查；是模型名就找 $CC_MODELS_DIR/faster-whisper-<名字>/，
+# 没有时（install 模式）下载到那里。large-v3-turbo 约 1.6 GB。
+echo "   models_dir=$CC_MODELS_DIR" >&2
+CC_PY="${CC_VENV}/bin/python"
+if [ ! -x "$CC_PY" ]; then
+  cc_bad "Whisper 模型: 转录环境未就绪，无法检查 $CC_WHISPER_MODEL"
+  MISSING=1
+elif model_msg="$("$CC_PY" "$SKILL_DIR/scripts/cc_model.py" check "$CC_WHISPER_MODEL" 2>&1)"; then
+  cc_ok "Whisper 模型: $model_msg"
+elif [ "$MODE" = check ]; then
+  cc_bad "Whisper 模型: $model_msg"
+  MISSING=1
 else
-  case "$CC_WHISPER_MODEL" in
-    small|tiny|base|medium|large-v2|large-v3)
-      cc_ok "Whisper 模型名: $CC_WHISPER_MODEL（首次转录时由 faster-whisper 按需下载）"
-      ;;
-    *)
-      if [ -e "$CC_WHISPER_MODEL" ]; then
-        cc_bad "CC_WHISPER_MODEL 路径存在但看起来不是模型目录: $CC_WHISPER_MODEL"
-        MISSING=1
-      else
-        # 允许模型名；未知名字也提示，但不强制失败（faster-whisper 还可能认识）
-        cc_info "CC_WHISPER_MODEL=$CC_WHISPER_MODEL （将按模型名交给 faster-whisper）"
-      fi
-      ;;
-  esac
+  cc_info "下载 Whisper 模型 $CC_WHISPER_MODEL 到 $CC_MODELS_DIR"
+  if model_dir="$("$CC_PY" "$SKILL_DIR/scripts/cc_model.py" download "$CC_WHISPER_MODEL")"; then
+    cc_ok "Whisper 模型已就绪: $model_dir"
+  else
+    cc_err "Whisper 模型下载失败: $CC_WHISPER_MODEL"
+    MISSING=1
+  fi
 fi
 
 # ---------- 4. TikTokDownloader / XHS-Downloader ----------

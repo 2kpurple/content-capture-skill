@@ -6,7 +6,10 @@
 
 环境变量:
   CC_VENV            转录虚拟环境（本脚本建议用该环境的 python 启动）
-  CC_WHISPER_MODEL   模型名（默认 small）或本地模型目录
+  CC_WHISPER_MODEL   模型名（默认 large-v3-turbo）或本地模型目录
+  CC_MODELS_DIR      按模型名查找/下载模型的目录：$CC_MODELS_DIR/faster-whisper-<模型名>/
+  CC_WHISPER_TEMPERATURE  解码温度。默认 faster-whisper 的回退序列 0,0.2,0.4,0.6,0.8,1.0
+                     （先用 0，出现复读等质量问题才升温重试）；设成 0 则固定 0、不回退
   CC_LANGUAGE        默认识别语言；不设或设为 auto 时自动识别
   CC_ZH_PROMPT       中文转录的提示词，默认「以下是普通话的句子。」
 
@@ -85,10 +88,25 @@ def run_ffmpeg(src: Path, dest: Path, max_seconds: float | None) -> None:
 
 
 def resolve_model(name_or_path: str) -> str:
-    p = Path(name_or_path).expanduser()
-    if p.is_dir() and (p / "config.json").exists():
+    """本地目录直接用；模型名先找 $CC_MODELS_DIR/faster-whisper-<名字>/，没有就下载到那里。"""
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
+    import cc_model
+
+    p, msg = cc_model.resolve(name_or_path)
+    if p is not None:
         return str(p)
-    return name_or_path
+    if cc_model.looks_like_path(name_or_path) or cc_model.known_repo(name_or_path) is None:
+        raise RuntimeError(f"模型不可用: {msg}")
+    log(f"{msg}；现在下载（只需一次）")
+    return str(cc_model.download(name_or_path))
+
+
+def temperature_setting():
+    raw = (os.environ.get("CC_WHISPER_TEMPERATURE") or "").strip()
+    if not raw:
+        return None  # 用 faster-whisper 默认的回退序列
+    vals = [float(x) for x in raw.replace("，", ",").split(",") if x.strip()]
+    return vals[0] if len(vals) == 1 else vals
 
 
 def main() -> int:
@@ -101,7 +119,7 @@ def main() -> int:
         default=os.environ.get("CC_LANGUAGE") or "auto",
         help="识别语言，如 zh、en；auto 表示自动识别（默认读 CC_LANGUAGE，不设则 auto）",
     )
-    ap.add_argument("--model", default=os.environ.get("CC_WHISPER_MODEL", "small"), help="模型名或本地目录（默认读 CC_WHISPER_MODEL）")
+    ap.add_argument("--model", default=os.environ.get("CC_WHISPER_MODEL") or "large-v3-turbo", help="模型名或本地目录（默认读 CC_WHISPER_MODEL，未设为 large-v3-turbo）")
     args = ap.parse_args()
     language = (args.language or "").strip().lower()
     if language in {"", "auto", "none"}:
@@ -158,6 +176,10 @@ def main() -> int:
         log(f"加载模型: {model_id}  device=cpu compute_type=int8")
         model = WhisperModel(model_id, device="cpu", compute_type="int8")
         opts = dict(vad_filter=True, beam_size=5)
+        temp = temperature_setting()
+        if temp is not None:
+            opts["temperature"] = temp
+            log(f"temperature={temp}")
         if language == "zh":
             segments, info = model.transcribe(str(wav), language="zh", initial_prompt=ZH_PROMPT, **opts)
         else:

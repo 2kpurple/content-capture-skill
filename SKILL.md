@@ -41,7 +41,9 @@ description: 内容收录：把抖音、小红书、X、YouTube 视频链接或�
 环境变量（都有默认值，本机已有工具时先导出，避免重复下载）：
 - `CC_TOOLS_DIR`：大仓库所在目录，默认 `~/.local/share/content-capture/tools`；也可分别用 `CC_TIKTOK_DIR`、`CC_XHS_DIR`。
 - `CC_VENV`：转录虚拟环境，默认 `~/.local/share/content-capture/venv`。
-- `CC_WHISPER_MODEL`：Whisper 模型名或本地路径，默认 `small`。
+- `CC_WHISPER_MODEL`：Whisper 模型名或本地模型目录，默认 `large-v3-turbo`。
+- `CC_MODELS_DIR`：按模型名查找、下载模型的目录（`$CC_MODELS_DIR/faster-whisper-<模型名>/`），默认 `~/.local/share/content-capture/models`。setup 会把默认模型下到这里（约 1.6 GB），doctor 检查模型在不在、是不是能加载的 CTranslate2 目录。
+- `CC_WHISPER_TEMPERATURE`：解码温度，默认用 faster-whisper 的回退序列（先 0，出质量问题才升温重试）；设 `0` 则固定 0、不回退。
 - `CC_DOUYIN_API`：TikTokDownloader Web API 地址，默认 `http://127.0.0.1:5555`。
 - `WXFETCH_VENV`：公众号抓取的虚拟环境，默认 `~/.local/share/wxfetch/venv`。
 - `CC_OUTPUT_ROOT`：收录根目录，默认当前目录下的 `content-capture-out`。每条的素材目录、正文 Markdown 和总索引都在这里。
@@ -71,7 +73,7 @@ stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），�
 - **X**：yt-dlp 默认参数。有的视频没有音轨，转录会写 `[无音轨]`。
 - **YouTube**：yt-dlp 加 `--extractor-args "youtube:player_client=android" -f 18`，避开 429。
 - **公众号**：`collect` 调用 `wxfetch`，先走 HTTP，失败就换 Playwright 无头浏览器；输出 `article.md`（带标题、公众号、作者、发布时间）、`article.json`、`images/`。它自己的退出码：4 反爬（稍后重试一次），5 已删除，6 只能在微信里打开，7 账号迁移，8 付费内容。多篇逐篇跑，篇间停一两秒。
-- **转录**：faster-whisper，默认模型 `small`，CPU、int8、`vad_filter=True`；语言默认抖音/小红书 `zh`、X/YouTube 自动识别，可用 `--language auto|zh|en|...` 覆盖。**中文一律输出简体**：语言是 zh（指定的，或自动识别出来是 zh）时，用 `language=zh` 加简体提示词转录，再用 OpenCC（`opencc-python-reimplemented`，t2s）把文案转成简体兜底；X/YouTube 仍先自动识别，英文不会被强制成中文。OpenCC 由 setup 装进转录环境，doctor 会检查；缺了照样转录，但会警告可能含繁体，此时先跑 `content-capture setup`。输出带时间戳的 `transcript.txt` 和纯文本。也可用 `content-capture transcribe <音频> [--max-seconds N] [--language L]` 单独转录。抖音图集、小红书图文只存图片和文案（summary 里 `kind: images`），不转录；文件损坏或没有音轨时 collect 报失败（退出码 5）。
+- **转录**：faster-whisper，默认模型 `large-v3-turbo`（CPU int8 下 1 分钟中文约 12 秒、内存约 2 GB，准确率明显好于 small），CPU、int8、`vad_filter=True`；语言默认抖音/小红书 `zh`、X/YouTube 自动识别，可用 `--language auto|zh|en|...` 覆盖。**中文一律输出简体**：语言是 zh（指定的，或自动识别出来是 zh）时，用 `language=zh` 加简体提示词转录，再用 OpenCC（`opencc-python-reimplemented`，t2s）把文案转成简体兜底；X/YouTube 仍先自动识别，英文不会被强制成中文。OpenCC 由 setup 装进转录环境，doctor 会检查；缺了照样转录，但会警告可能含繁体，此时先跑 `content-capture setup`。输出带时间戳的 `transcript.txt` 和纯文本。也可用 `content-capture transcribe <音频> [--max-seconds N] [--language L]` 单独转录。抖音图集、小红书图文只存图片和文案（summary 里 `kind: images`），不转录；文件损坏或没有音轨时 collect 报失败（退出码 5）。
 
 ## 3. 存档（必做，每条都要走完）
 

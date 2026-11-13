@@ -43,8 +43,11 @@ fi
 : "${CC_XHS_DIR:=${CC_TOOLS_DIR}/XHS-Downloader}"
 # 转录虚拟环境（faster-whisper + PyAV 13）
 : "${CC_VENV:=${HOME}/.local/share/content-capture/venv}"
-# Whisper 模型：模型名（默认 small）或本地目录路径
-: "${CC_WHISPER_MODEL:=small}"
+# Whisper 模型：模型名（默认 large-v3-turbo）或本地模型目录路径
+: "${CC_WHISPER_MODEL:=large-v3-turbo}"
+# 按模型名下载的模型放这里：$CC_MODELS_DIR/faster-whisper-<模型名>/
+: "${CC_MODELS_DIR:=${HOME}/.local/share/content-capture/models}"
+export CC_WHISPER_MODEL CC_MODELS_DIR
 # 抖音 Web API
 : "${CC_DOUYIN_API:=http://127.0.0.1:5555}"
 : "${CC_DOUYIN_API_LOG:=/tmp/content-capture-douyin-api.log}"
@@ -56,13 +59,6 @@ cc_ok()  { printf '  [ OK ] %s\n' "$*" >&2; }
 cc_bad() { printf '  [MISS] %s\n' "$*" >&2; }
 cc_info(){ printf '  [....] %s\n' "$*" >&2; }
 cc_err() { printf '  [ERR ] %s\n' "$*" >&2; }
-
-# 判断路径是否像本地模型目录
-cc_is_model_path() {
-  local p="$1"
-  [ -d "$p" ] || return 1
-  [ -f "$p/model.bin" ] || [ -f "$p/config.json" ]
-}
 
 # 把任意字符串收成适合做目录名的一段
 cc_slug() {
