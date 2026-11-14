@@ -91,6 +91,16 @@ p=urlparse(u if "://" in u else "https://"+u); print((p.netloc or "").lower())' 
   esac
 }
 
+# 是否是 X 长文（X Article）链接：x.com/i/article/<id> 或 x.com/<用户>/article/<id>（含 twitter.com）。
+# 长文不能用 yt-dlp 下载，由 agent 按 SKILL.md「X 长文」一节用 X 读取工具抓取。
+cc_is_x_article() {
+  python3 -c 'import re,sys; from urllib.parse import urlparse
+u=sys.argv[1].strip(); p=urlparse(u if "://" in u else "https://"+u)
+h=(p.hostname or "").lower(); h=h[4:] if h.startswith("www.") else h
+ok=h in {"x.com","twitter.com","mobile.twitter.com","mobile.x.com"} and re.match(r"^/(?:i|[A-Za-z0-9_]{1,15})/articles?/\d+/?$", p.path or "")
+sys.exit(0 if ok else 1)' "$1"
+}
+
 cc_json_escape() {
   python3 -c 'import json,sys; print(json.dumps(sys.argv[1], ensure_ascii=False))' "$1"
 }

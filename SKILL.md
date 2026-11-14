@@ -65,21 +65,60 @@ $CC/collect.sh <链接> [输出目录]   # 等价于 content-capture collect
 
 `detect` 根据链接域名（或分享口令里的第一个 URL）判断平台：`douyin`、`xhs`、`x`、`youtube`、`wechat`，其余为 `unknown`（含 B 站，暂不支持）。公众号也走 `collect`，识别后自动调用 wxfetch。
 
-stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），含平台、标题、作者、文件路径、状态。收录成功时还有 `index`（总索引路径）和 `doc`（这一条正文 Markdown 要写到的路径），collect 已按原链接在索引里预留了一行（标签、摘要为空）。退出码：0 成功，1 用法错误，2 不支持的链接，3 依赖缺失，4 下载失败，5 转录失败，6 公众号抓取失败，10 工具未就绪。非 0 就如实告诉使用者，不编内容。
+stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），含平台、标题、作者、文件路径、状态。收录成功时还有 `index`（总索引路径）和 `doc`（这一条正文 Markdown 要写到的路径），collect 已按原链接在索引里预留了一行（标签、摘要为空）。退出码：
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 成功 |
+| 1 | 用法错误 |
+| 2 | 不支持的链接 |
+| 3 | 依赖缺失 |
+| 4 | 下载失败 |
+| 5 | 转录失败 |
+| 6 | 公众号抓取失败 |
+| 10 | 工具未就绪 |
+| 11 | X 长文链接（`x.com/i/article/…`、`twitter.com` 同理）：collect 不下载、不建目录，按下文「X 长文」一节由 agent 抓取 |
+
+非 0（11 除外）就如实告诉使用者，不编内容。
 
 各平台做法（脚本已实现，排障时参考）：
 - **抖音**：TikTokDownloader Web API。没启动时用 `scripts/start_douyin_api.py` 非交互启动。`POST /douyin/share` 拿作品 ID，`POST /douyin/detail` 取 `data.downloads`，curl 带浏览器 UA 和 `Referer: https://www.douyin.com/` 下载。不调用 `POST /settings`，不改它的全局配置。直接用 yt-dlp 下抖音常被 403。
 - **小红书**：XHS-Downloader（`-l zh_CN --note_format all --folder_mode true --record_data true`）。xhscdn 的 `http://` 地址会返回 500，脚本会改成 `https://` 用 curl 补下。链接要保留 `xsec_token` 参数。yt-dlp 下小红书常报「No video formats」。
-- **X**：yt-dlp 默认参数。有的视频没有音轨，转录会写 `[无音轨]`。
+- **X**：普通帖子（含视频）用 yt-dlp 默认参数。有的视频没有音轨，转录会写 `[无音轨]`。X 长文不走这里，见下文「X 长文」。
 - **YouTube**：yt-dlp 加 `--extractor-args "youtube:player_client=android" -f 18`，避开 429。
 - **公众号**：`collect` 调用 `wxfetch`，先走 HTTP，失败就换 Playwright 无头浏览器；输出 `article.md`（带标题、公众号、作者、发布时间）、`article.json`、`images/`。它自己的退出码：4 反爬（稍后重试一次），5 已删除，6 只能在微信里打开，7 账号迁移，8 付费内容。多篇逐篇跑，篇间停一两秒。
 - **转录**：faster-whisper，默认模型 `large-v3-turbo`（CPU int8 下 1 分钟中文约 12 秒、内存约 2 GB，准确率明显好于 small），CPU、int8、`vad_filter=True`；语言默认抖音/小红书 `zh`、X/YouTube 自动识别，可用 `--language auto|zh|en|...` 覆盖。**中文一律输出简体**：语言是 zh（指定的，或自动识别出来是 zh）时，用 `language=zh` 加简体提示词转录，再用 OpenCC（`opencc-python-reimplemented`，t2s）把文案转成简体兜底；X/YouTube 仍先自动识别，英文不会被强制成中文。OpenCC 由 setup 装进转录环境，doctor 会检查；缺了照样转录，但会警告可能含繁体，此时先跑 `content-capture setup`。输出带时间戳的 `transcript.txt` 和纯文本。也可用 `content-capture transcribe <音频> [--max-seconds N] [--language L]` 单独转录。抖音图集、小红书图文只存图片和文案（summary 里 `kind: images`），不转录；文件损坏或没有音轨时 collect 报失败（退出码 5）。
+
+## X 长文
+
+X 长文（X Article）没有可下载的媒体，yt-dlp 拿不到，也不要用付费 API 或登录。由 agent 用自己内置的 X 读取工具抓取，再按公众号文章的格式存档。
+
+**1. 判断是不是长文**
+- `x.com/<用户>/status/<id>`（含 `twitter.com`）：先用 X 读取工具查这条帖子。结果里有 `article` 字段就是长文，按本节处理；没有（普通帖子、视频帖）就照常 `content-capture collect`。
+- `x.com/i/article/<id>`：collect 会直接以退出码 11 结束。先设法找到对应的 status（例如用户同时给的帖子链接、作者主页里的这条帖子）。找不到就直说「只有长文链接，找不到对应帖子，读不到内容」，不要编内容。
+
+**2. 抓取**：调用 X 读取工具的 `get_posts_by_id`，参数：
+- `post.fields`：`article`、`article_title`、`created_at`、`author_id`
+- `expansions`：`article.media_entities`、`article.cover_media`、`author_id`
+- `media.fields`：`url`、`preview_image_url`
+- `user.fields`：`username`、`name`
+
+能拿到：`article.title`（标题）、`article.plain_text`（全文）、`article.entities.code`（代码块原文）、`includes.media`（封面和正文图片的 URL）、`includes.users`（作者用户名）、`created_at`（发布时间）。
+
+**3. 正文**
+- 原文一字不改，不润色、不翻译、不改写；段落按 `plain_text` 的换行分。
+- `article.entities.code` 里的代码按原位置还原成 Markdown 围栏代码块（标上语言）。
+- 图片下载到本地素材目录 `$CC_OUTPUT_ROOT/<YYYYMMDD>-x-<用户名>-<status id>/images/`（文件名按顺序编号），正文里用标准 Markdown 图片语法、相对正文文件的路径引用，例如 `![](20261114-x-someone-123/images/01.jpg)`。图片下载失败就保留原图 URL，并注明。
+
+**4. 存档**：文件名 `<日期>-X-<标题>.md`，放在 `$CC_OUTPUT_ROOT`。结构和公众号文章一样：标题、来源平台 X、原链接（用 status 链接）、作者/账号（`@用户名`）和发布时间，然后是下面「存档」一节的固定内容解析结构，最后「文案全文」放上面整理好的原文。
+
+**5. 登记索引**：照常 `content-capture index add --platform x --url "<status 链接>" --doc "<正文路径>" ...`，标签、摘要同其他平台。
 
 ## 3. 存档（必做，每条都要走完）
 
 每条收录成功后，**必须**按顺序做完下面两步，缺一步都不算收录完成：
 
-1. **写正文 Markdown**：路径用 summary.json 里的 `doc`（`$CC_OUTPUT_ROOT/日期-平台-标题.md`，collect 已算好；同名冲突时自动加 `-2`）。不要自己另起文件名。
+1. **写正文 Markdown**：路径用 summary.json 里的 `doc`（`$CC_OUTPUT_ROOT/日期-平台-标题.md`，collect 已算好；同名冲突时自动加 `-2`）。不要自己另起文件名。X 长文不经过 collect，按上文「X 长文」自己定文件名。
 2. **更新总索引**：正文写好后立刻登记，带上标签和摘要：
 
    ```bash
@@ -101,7 +140,7 @@ stdout 打印一段 JSON 摘要（也存为 `<输出目录>/summary.json`），�
 - 结构拆解
 - 可复用的表达与节奏
 - 可以借鉴改写的方向（只为做自己的原创）
-- 文案全文：视频转录原话照记，不润色，听不清处标「[听不清]」，同音错字另列「可能的识别错误」；公众号保留原文。
+- 文案全文：视频转录原话照记，不润色，听不清处标「[听不清]」，同音错字另列「可能的识别错误」；公众号、X 长文保留原文。
 
 聊天里只给解析要点、正文路径和索引路径，长文案不全贴。
 

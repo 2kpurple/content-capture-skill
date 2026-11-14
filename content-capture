@@ -12,7 +12,7 @@
 #
 # 公众号、抖音、小红书、X、YouTube 都走 collect，由 detect 按链接分派。
 # 退出码：0 成功；1 用法错误；2 不支持的链接；3 依赖缺失；4 下载失败；
-#         5 转录失败；6 公众号抓取失败；10 工具未就绪。
+#         5 转录失败；6 公众号抓取失败；10 工具未就绪；11 X 长文（由 agent 抓取）。
 # doctor 全部就绪为 0，有缺失为 1。
 set -uo pipefail
 
@@ -63,7 +63,8 @@ index        维护总索引 索引.md（5 列：标题 | 来源（平台） | �
              CC_OUTPUT_ROOT 默认 ./content-capture-out，可写进 ~/.config/content-capture/config.sh。
 
 collect 退出码：0 成功；1 用法错误；2 不支持的链接；3 依赖缺失；
-4 下载失败；5 转录失败；6 公众号抓取失败；10 工具未就绪。
+4 下载失败；5 转录失败；6 公众号抓取失败；10 工具未就绪；
+11 X 长文（x.com/i/article/…），collect 不处理，由 agent 按 SKILL.md「X 长文」抓取。
 EOF
 }
 
@@ -344,6 +345,14 @@ cmd_collect() {
   extracted="$(cc_extract_url "$URL")"
   if [ -n "$extracted" ]; then
     URL="$extracted"
+  fi
+
+  # X 长文：不调用 yt-dlp，也不建输出目录，直接说明并以退出码 11 结束
+  if cc_is_x_article "$URL"; then
+    local msg="这是 X 长文（X Article），collect 不下载。请由 agent 按 SKILL.md「X 长文」一节，用 X 读取工具（get_posts_by_id，带 article 字段）抓取正文后存档。"
+    cc_err "$msg"
+    python3 -c 'import json,sys; print(json.dumps({"ok": False, "status": "error", "error_code": 11, "message": sys.argv[2], "platform": "x", "kind": "x_article", "url": sys.argv[1]}, ensure_ascii=False, indent=2))' "$URL" "$msg"
+    exit 11
   fi
 
   if [ -z "$OUT" ]; then

@@ -102,7 +102,9 @@ export CC_WHISPER_MODEL=/path/to/faster-whisper-large-v3-turbo   # 或模型名�
 
 结束时在 stdout 打印 JSON 摘要（平台、标题、作者、文件路径、状态），完整副本在 `<输出目录>/summary.json`。失败会带 `error_code` 和 `message`，退出码非 0。
 
-`collect` 退出码：`0` 成功；`1` 用法错误；`2` 不支持的链接；`3` 依赖缺失；`4` 下载失败；`5` 转录失败；`6` 公众号抓取失败；`10` 工具未就绪。
+`collect` 退出码：`0` 成功；`1` 用法错误；`2` 不支持的链接；`3` 依赖缺失；`4` 下载失败；`5` 转录失败；`6` 公众号抓取失败；`10` 工具未就绪；`11` X 长文链接。
+
+X 长文（`x.com/i/article/…`）不走 yt-dlp：collect 直接以退出码 `11` 结束，由 agent 用 X 读取工具（`get_posts_by_id` 带 `article` 字段）抓取全文、代码块和图片后按公众号格式存档，详见 `SKILL.md`「X 长文」。
 
 也可以单独调用各底层脚本：
 
